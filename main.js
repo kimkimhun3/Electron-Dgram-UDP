@@ -1,13 +1,12 @@
 const { app, BrowserWindow, ipcMain, powerSaveBlocker } = require('electron');
 const path = require('path');
-const dgram = require('dgram');
+const { Worker } = require('worker_threads');
 
 let mainWindow;
 let powerSaveBlockerId;
-let server;
-let client;
+let receivingWorker;
+let sendingWorker;
 let packetBuffer = [];
-let bufferTimeout;
 let isBuffering = false;
 
 function createWindow() {
@@ -24,7 +23,6 @@ function createWindow() {
   });
 
   mainWindow.loadFile('index.html');
-
   mainWindow.on('focus', () => {
     console.log("Window focused");
   });
@@ -55,18 +53,20 @@ app.whenReady().then(() => {
   });
 
   ipcMain.on('start-udp', (event, { inputPort, outputAddress }) => {
-    if (!server || !client) {
-      startUdpSockets(inputPort, outputAddress);
+    if (receivingWorker || sendingWorker) {
+      console.log('UDP workers are already running');
+      return;
     }
-    isBuffering = false;  // Ensure normal operation
+    startReceivingWorker(inputPort, outputAddress);
+    startSendingWorker(inputPort, outputAddress);
   });
 
   ipcMain.on('start-udp-buffer', (event, { inputPort, outputAddress, bufferTime }) => {
-    if (!server || !client) {
-      startUdpSockets(inputPort, outputAddress);
+    if (isBuffering) {
+      console.log('Buffering is already in progress');
+      return;
     }
-    isBuffering = true;  // Activate buffering mode
-    startBuffering(bufferTime, inputPort, outputAddress);
+    startBuffering(inputPort, outputAddress, bufferTime);
   });
 });
 
@@ -76,54 +76,58 @@ app.on('window-all-closed', () => {
   }
 });
 
-function startUdpSockets(inputPort, outputAddress) {
-  server = dgram.createSocket('udp4');
-  client = dgram.createSocket('udp4');
+function startReceivingWorker(inputPort, outputAddress) {
+  receivingWorker = new Worker(path.join(__dirname, 'receivingWorker.js'), {
+    workerData: { inputPort, outputAddress },
+  });
 
-  client.on('message', (msg, rinfo) => {
+  receivingWorker.on('message', (message) => {
     if (isBuffering) {
-      packetBuffer.push(msg);  // Buffer the packets if in buffering mode
+      packetBuffer.push(message.packet); // Buffer packets during the buffering phase
     } else {
-      server.send(msg, inputPort, outputAddress, (err) => {
-        if (err) {
-          console.error(`Error sending message to ${outputAddress}: ${err.message}`);
-        }
-      });
+      // Immediately forward packets to the sending worker
+      sendingWorker.postMessage({ packet: message.packet });
     }
   });
 
-  client.on('listening', () => {
-    const address = client.address();
-    console.log(`Client listening on ${address.address}:${address.port}`);
+  receivingWorker.on('error', (err) => {
+    console.error(`Receiving worker error: ${err.message}`);
   });
 
-  server.on('listening', () => {
-    const address = server.address();
-    console.log(`Server listening on ${address.address}:${address.port}`);
+  receivingWorker.on('exit', (code) => {
+    if (code !== 0) {
+      console.error(`Receiving worker exited with error code ${code}`);
+    }
+  });
+}
+
+function startSendingWorker(inputPort, outputAddress) {
+  sendingWorker = new Worker(path.join(__dirname, 'sendingWorker.js'), {
+    workerData: { inputPort, outputAddress },
   });
 
-  client.bind(inputPort);
+  sendingWorker.on('error', (err) => {
+    console.error(`Sending worker error: ${err.message}`);
+  });
+
+  sendingWorker.on('exit', (code) => {
+    if (code !== 0) {
+      console.error(`Sending worker exited with error code ${code}`);
+    }
+  });
 }
 
-function startBuffering(bufferTime, inputPort, outputAddress) {
-  console.log(`Buffering for ${bufferTime} ms...`);
+function startBuffering(inputPort, outputAddress, bufferTime) {
+  console.log('Starting buffering...');
 
-  bufferTimeout = setTimeout(() => {
-    sendBufferedPackets(inputPort, outputAddress);
-    isBuffering = false;  // Switch back to normal UDP forwarding
-    packetBuffer = [];    // Clear the buffer after sending
-  }, bufferTime);
-}
+  isBuffering = true;
 
-function sendBufferedPackets(inputPort, outputAddress) {
-  const totalPackets = packetBuffer.length;
-  console.log(`Sending ${totalPackets} buffered packets...`);
-
-  packetBuffer.forEach(packet => {
-    server.send(packet, inputPort, outputAddress, (err) => {
-      if (err) {
-        console.error(`Error sending buffered packet: ${err.message}`);
-      }
+  setTimeout(() => {
+    console.log('Buffering complete. Sending buffered packets...');
+    packetBuffer.forEach((packet) => {
+      sendingWorker.postMessage({ packet });
     });
-  });
+    packetBuffer = []; // Clear buffer after sending
+    isBuffering = false;
+  }, bufferTime);
 }
