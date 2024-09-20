@@ -121,9 +121,10 @@ function startBuffering(inputPort, outputAddress, bufferTime) {
   console.log('Starting buffering...');
 
   isBuffering = true;
-
+  const startTime = Date.now();
   setTimeout(() => {
-    console.log('Buffering complete. Sending buffered packets...');
+    const elapsedTime = Date.now() - startTime;
+    console.log('Buffering complete. Sending buffered packets...', elapsedTime);
     packetBuffer.forEach((packet) => {
       sendingWorker.postMessage({ packet });
     });
@@ -131,3 +132,29 @@ function startBuffering(inputPort, outputAddress, bufferTime) {
     isBuffering = false;
   }, bufferTime);
 }
+
+
+// function startBuffering(inputPort, outputAddress, bufferTime) {
+//   console.log('Starting buffering...');
+
+//   isBuffering = true;
+
+//   const startTime = Date.now();  // Record the starting time
+
+//   const interval = setInterval(() => {
+//     const elapsedTime = Date.now() - startTime;  // Calculate elapsed time
+
+//     if (elapsedTime >= bufferTime) {
+//       console.log('Buffering complete. Sending buffered packets...',elapsedTime );
+
+//       packetBuffer.forEach((packet) => {
+//         sendingWorker.postMessage({ packet });
+//       });
+
+//       packetBuffer = [];  // Clear the buffer after sending
+//       isBuffering = false;
+
+//       clearInterval(interval);  // Stop the interval once buffer time is reached
+//     }
+//   }, 50);  // Check every 50ms for elapsed time
+// }
