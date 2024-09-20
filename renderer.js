@@ -6,7 +6,7 @@ document.getElementById('buffer2-main-execute').addEventListener('click', () => 
   const outputAddress = document.getElementById('output-address').value;
   const bufferTime = document.getElementById('buffer2-times').value;
 
-  // Check if buffer time is set (greater than 0), and perform buffering if required
+  // Check if buffer time is set (greater than 0), and perform buffering if required!
   if (parseInt(bufferTime, 10) > 0) {
     ipcRenderer.send('start-udp-buffer', {
       inputPort: parseInt(inputPort, 10),
